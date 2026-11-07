@@ -302,3 +302,35 @@ def test_sci_xy_to_fp():
     for (x, y), fp in corner_data:
         assert roman._wfi_sci_xy_to_fp(x, y) == fp  # test xy->fp
         assert roman._wfi_sci_xy_to_fp(*roman._wfi_fp_to_sci_xy(fp)) == fp , f'round trip error for fp {fp}'  # test round trip
+
+
+# ---- svh/newrd fork ----------------------------------------------------------
+
+def test_wfi_ipc_off_by_default():
+    """IPC belongs to the detector simulation, so the WFI PSF has none by default."""
+    wfi = roman.WFI()
+    assert wfi.options['add_ipc'] is False
+
+
+@pytest.mark.parametrize('det', ['WFI01', 'WFI05', 'WFI18'])
+def test_wfi_high_frequency_map_follows_detector(det):
+    """Each detector uses its own high-frequency OPD map, also after a filter change."""
+    wfi = roman.WFI()
+    wfi.detector = det
+    n = int(det[3:])
+    assert os.path.basename(wfi.pupilopd) == f'RST_WFI{n}_Z210_high_frequency_map.fits'
+    wfi.filter = 'GRISM1'
+    assert os.path.basename(wfi.pupilopd) == f'RST_WFI{n}_Z210_high_frequency_map.fits'
+
+
+def test_wfi_ipc_matches_explicit_option():
+    """add_ipc=True still reproduces the 2.3.0 default; False leaves OVERDIST unconvolved."""
+    wfi = roman.WFI()
+    wfi.filter = 'F158'
+    off = wfi.calc_psf(fov_pixels=11, oversample=2, nlambda=1)
+    wfi.options['add_ipc'] = True
+    on = wfi.calc_psf(fov_pixels=11, oversample=2, nlambda=1)
+    d = 'OVERDIST'
+    assert not np.allclose(off[d].data, on[d].data)
+    # IPC moves light from the core into the neighbours
+    assert on[d].data.max() < off[d].data.max()
