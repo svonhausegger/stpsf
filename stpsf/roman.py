@@ -376,7 +376,11 @@ class RomanInstrument(stpsf_core.SpaceTelescopeInstrument):
         self.options = _RomanInstrumentOptionsDict(self.options.copy())
 
         # then, set defaults for options modifiable by users
-        self.options['add_ipc'] = True
+        # svh/newrd: IPC is off by default. It is a detector effect that the
+        # detector simulation (romanisim, CRDS ``ipc`` reference file) applies to
+        # the ramps; baking it into the PSF as well counts it twice. Set
+        # options['add_ipc'] = True to get the 2.3.0 behaviour.
+        self.options['add_ipc'] = False
         # charge_diffusion_sigma set in RomanInstrument._calc_psf_format_output
         self.options['jitter'] = 'gaussian'
         self.options['jitter_sigma'] = constants.ROMAN_TYPICAL_LOS_JITTER_PER_AXIS
@@ -542,7 +546,7 @@ class RomanInstrument(stpsf_core.SpaceTelescopeInstrument):
         # Rewrite result variable based on output_mode set:
         stpsf_core.SpaceTelescopeInstrument._calc_psf_format_output(self, result, options)
 
-        add_ipc = options.get('add_ipc', True)
+        add_ipc = options.get('add_ipc', False)
         if add_ipc and ('DET_DIST' in result):
             # apply detector IPC model (after binning to detector sampling)
             _log.info('WFI: Adding interpixel capacitance (IPC) to DET_DIST extension')
@@ -883,6 +887,14 @@ class WFI(RomanInstrument):
         if detector is not None and wfi_filter is not None:
             self._pupil_controller.update_pupil(wfi_filter=wfi_filter,
                                                 detector=detector)
+
+        # svh/newrd: also select this detector's high-frequency OPD map. Until
+        # 2.3.0 it was set once to WFI01's and never changed, so every detector
+        # used WFI01's map, although the detector setter's docstring says it
+        # adjusts the map. Bypasses the pupilopd setter, which refuses changes.
+        opd_files = getattr(self, '_opd_file_dict', None)
+        if detector is not None and opd_files is not None and detector in opd_files:
+            self._pupilopd = opd_files[detector]
 
     @RomanInstrument.detector.setter
     def detector(self, value):

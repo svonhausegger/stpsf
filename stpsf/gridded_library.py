@@ -350,7 +350,11 @@ class CreatePSFLibrary:
                 # Convolve PSF with a model for interpixel capacitance
                 if add_distortion and add_ipc_gridded:
                     stpsf.detectors.apply_detector_ipc(psf, extname=ext)
-                    self.webb.options['add_ipc'] = True  # restore the user's value for the IPC option
+                # svh/newrd: restore the user's IPC option whenever it was switched
+                # off above. 2.3.0 restored it only with add_distortion, so a
+                # grid made without distortion left the instrument with IPC off.
+                if add_ipc_gridded:
+                    self.webb.options['add_ipc'] = True
 
                 # Add PSF to 5D array
                 psf_arr[i, :, :] = psf[ext].data
