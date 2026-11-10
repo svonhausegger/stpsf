@@ -285,18 +285,24 @@ class CreatePSFLibrary:
 
         """
         add_distortion = getattr(self, 'add_distortion', False)
+        # svh/newrd: Roman WFI PSFs always include their distortion, and only the
+        # *DIST extensions include charge diffusion (RomanInstrument.
+        # _calc_psf_format_output). add_distortion is never set for Roman, so the
+        # grid used to come from OVERSAMP/DET_SAMP, without charge diffusion.
+        # Use the *DIST extensions for WFI; IPC still follows options['add_ipc'].
+        use_dist_ext = add_distortion or self.webb.name == 'WFI'
 
         # Set output mode and extension to use
         if self.use_detsampled_psf is True:
             self.webb.options['output_mode'] = 'Detector sampled image'
             self.oversample = 1
-            if add_distortion:
+            if use_dist_ext:
                 ext = 'DET_DIST'
             else:
                 ext = 'DET_SAMP'
         elif self.use_detsampled_psf is False:
             self.webb.options['output_mode'] = 'Oversampled image'
-            if add_distortion:
+            if use_dist_ext:
                 ext = 'OVERDIST'
             else:
                 ext = 'OVERSAMP'
@@ -348,7 +354,7 @@ class CreatePSFLibrary:
                 psf[ext].data = astropy.convolution.convolve(psf[ext].data, kernel)
 
                 # Convolve PSF with a model for interpixel capacitance
-                if add_distortion and add_ipc_gridded:
+                if use_dist_ext and add_ipc_gridded:
                     stpsf.detectors.apply_detector_ipc(psf, extname=ext)
                 # svh/newrd: restore the user's IPC option whenever it was switched
                 # off above. 2.3.0 restored it only with add_distortion, so a
@@ -425,6 +431,14 @@ class CreatePSFLibrary:
             meta['FFTTYPE'] = (psf[ext].header['FFTTYPE'], 'Algorithm for FFTs: numpy or fftw')
             meta['NORMALIZ'] = (psf[ext].header['NORMALIZ'], 'PSF normalization method')
             meta['TEL_WFE'] = (psf[ext].header['TEL_WFE'], '[nm] Telescope pupil RMS wavefront error')
+
+            # svh/newrd: record the detector effects in the grid, so a reader can
+            # tell whether charge diffusion and IPC are included.
+            if 'CHDFTYPE' in psf[ext].header:
+                meta['CHDFTYPE'] = (psf[ext].header['CHDFTYPE'], 'Charge diffusion model')
+                meta['CHDFSIGM'] = (psf[ext].header['CHDFSIGM'], '[arcsec] Charge diffusion sigma')
+            if self.webb.name == 'WFI':
+                meta['ADD_IPC'] = ('IPCINST' in psf[ext].header, 'Interpixel capacitance applied')
 
             # Copy values for per-segment Zernike {piston, tip, tilt}, if present
             # (these are only present or used in incoherent segment PSF generation with the

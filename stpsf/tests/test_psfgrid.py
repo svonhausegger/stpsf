@@ -288,7 +288,9 @@ def test_wfi():
 
     # Using meta data, create the expected same PSF via calc_psf
     wfi.detector_position = (locx, locy)
-    calcpsf = wfi.calc_psf(oversample=oversample, fov_pixels=fov_pixels, nlambda=nlambda)['OVERSAMP'].data
+    # svh/newrd: the grid comes from OVERDIST (charge diffusion, IPC per add_ipc,
+    # off by default in this fork), not OVERSAMP.
+    calcpsf = wfi.calc_psf(oversample=oversample, fov_pixels=fov_pixels, nlambda=nlambda)['OVERDIST'].data
     kernel = astropy.convolution.Box2DKernel(width=oversample)
     convpsf = astropy.convolution.convolve(calcpsf, kernel)
     scalefactor = oversample**2  # normalization as used internally in GriddedPSFModel; see #302
@@ -296,3 +298,47 @@ def test_wfi():
     # Compare to make sure they are in fact the same PSF
     assert gridpsf.shape == calcpsf.shape, 'Shape mismatch'
     assert np.allclose(gridpsf, convpsf * scalefactor), 'Data values not as expected'
+
+
+def _wfi_grid_and_psf(add_ipc):
+    """One-position WFI grid and the matching calc_psf result."""
+    oversample, fov_pixels = 2, 10
+    wfi = roman.WFI()
+    wfi.options['add_ipc'] = add_ipc
+    grid = wfi.psf_grid(all_detectors=False, num_psfs=1, fov_pixels=fov_pixels,
+                        oversample=oversample, nlambda=1, verbose=False)
+    wfi.options['add_ipc'] = False
+    psf = wfi.calc_psf(oversample=oversample, fov_pixels=fov_pixels, nlambda=1)
+    kernel = astropy.convolution.Box2DKernel(width=oversample)
+    for ext in ('OVERSAMP', 'OVERDIST'):
+        psf[ext].data = astropy.convolution.convolve(psf[ext].data, kernel) * oversample**2
+    return wfi, grid, psf
+
+
+def test_wfi_grid_includes_charge_diffusion():
+    """svh/newrd: WFI grids carry charge diffusion (OVERDIST) and, by default, no IPC."""
+    wfi, grid, psf = _wfi_grid_and_psf(add_ipc=False)
+    assert np.allclose(grid.data[0], psf['OVERDIST'].data)
+    assert not np.allclose(grid.data[0], psf['OVERSAMP'].data)
+    assert grid.data[0].max() < psf['OVERSAMP'].data.max()  # diffusion lowers the peak
+    meta = {k.upper(): v for k, v in grid.meta.items()}
+    chdfsigm = meta['CHDFSIGM'][0] if isinstance(meta['CHDFSIGM'], tuple) else meta['CHDFSIGM']
+    add_ipc = meta['ADD_IPC'][0] if isinstance(meta['ADD_IPC'], tuple) else meta['ADD_IPC']
+    assert chdfsigm > 0
+    assert not add_ipc
+    assert wfi.options['add_ipc'] is False
+
+
+def test_wfi_grid_ipc_follows_option():
+    """svh/newrd: with add_ipc=True the grid gets IPC on top of OVERDIST, and the option is restored."""
+    wfi = roman.WFI()
+    wfi.options['add_ipc'] = True
+    wfi.psf_grid(all_detectors=False, num_psfs=1, fov_pixels=10, oversample=2, nlambda=1, verbose=False)
+    assert wfi.options['add_ipc'] is True
+
+    _, grid, psf = _wfi_grid_and_psf(add_ipc=True)
+    detectors.apply_detector_ipc(psf, extname='OVERDIST')
+    assert np.allclose(grid.data[0], psf['OVERDIST'].data)
+    meta = {k.upper(): v for k, v in grid.meta.items()}
+    add_ipc = meta['ADD_IPC'][0] if isinstance(meta['ADD_IPC'], tuple) else meta['ADD_IPC']
+    assert add_ipc
