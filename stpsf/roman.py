@@ -888,14 +888,6 @@ class WFI(RomanInstrument):
             self._pupil_controller.update_pupil(wfi_filter=wfi_filter,
                                                 detector=detector)
 
-        # svh/newrd: also select this detector's high-frequency OPD map. Until
-        # 2.3.0 it was set once to WFI01's and never changed, so every detector
-        # used WFI01's map, although the detector setter's docstring says it
-        # adjusts the map. Bypasses the pupilopd setter, which refuses changes.
-        opd_files = getattr(self, '_opd_file_dict', None)
-        if detector is not None and opd_files is not None and detector in opd_files:
-            self._pupilopd = opd_files[detector]
-
     @RomanInstrument.detector.setter
     def detector(self, value):
         """
