@@ -87,8 +87,9 @@ class WavelengthDependenceInterpolator(object):
     points.
 
     For an imaging filter in STPSF's default reference WFI data,
-    n_wavelengths=3 and n_zernikes=210. For a grism or prism filter,
-    n_wavelengths=16 and n_zernikes=45. See the docstring for
+    n_wavelengths=3 and n_zernikes=210. For a grism filter,
+    n_wavelengths=5 and n_zernikes=45; for the prism, n_wavelengths=7
+    and n_zernikes=45. See the docstring for
     `build_detector_from_table()` in this file for more information.
     """
 
@@ -290,9 +291,9 @@ def _load_wfi_detector_aberrations(filename):
 
         In STPSF's default reference WFI data, imaging filters contain
         aberration data at the low, middle, and high wavelengths of their
-        bandpasses. There are 16 unique wavelengths with recorded aberration
-        data across the WFI's imaging filters. The prism, grism0, and grism1
-        filters each contain aberration data for all 16 such wavelengths.
+        bandpasses (21 unique wavelengths across the imaging filters). The
+        grism0 and grism1 filters contain aberration data at 5 wavelengths
+        (1.00-1.93 microns), and the prism at 7 (0.75-1.80 microns).
 
         Each imaging filter contains 25 field points per detector and Zernike
         coefficients up to Z210 for each detector/field point/intra-filter
