@@ -391,3 +391,79 @@ def test_wfi_aberration_table_not_modified():
     aber._omit_piston_tip_tilt = False
     aber.field_position = list(aber._wavelength_interpolators)[0]
     np.testing.assert_array_equal(aber.get_aberration_terms(wl), stored[0])
+
+
+def _grism_zernikes(wfi, aber, pos, wl=1.5e-6):
+    wfi.detector_position = pos
+    return aber.get_aberration_terms(wl)[3:]
+
+
+def test_wfi_field_interpolation_continuous_at_hull_edge():
+    """svh/newrd: no jump where a position leaves the field-point hull."""
+    wfi = roman.WFI()
+    wfi.filter = 'GRISM1'
+    wfi.detector = 'WFI05'
+    aber = wfi._detectors['WFI05']
+    # (16|20, 2044) and (2044, 180|184) straddle the hull edge on WFI05
+    for a, b in [((16, 2044), (20, 2044)), ((2044, 180), (2044, 184))]:
+        step = np.abs(_grism_zernikes(wfi, aber, a) - _grism_zernikes(wfi, aber, b)).max()
+        assert step < 0.1e-9  # was 9.4 nm and 4.3 nm
+
+
+def test_wfi_field_interpolation_unchanged_inside_hull():
+    """svh/newrd: inside the hull the Zernikes are the plain linear interpolation."""
+    from scipy.interpolate import griddata
+
+    wfi = roman.WFI()
+    wfi.filter = 'GRISM1'
+    wfi.detector = 'WFI05'
+    aber = wfi._detectors['WFI05']
+    points = np.array(list(aber._wavelength_interpolators))
+    terms = np.array([i.get_aberration_terms(1.5e-6) for i in aber._wavelength_interpolators.values()])
+    expected = griddata(points, terms, (1000, 2000), method='linear')[3:]
+    np.testing.assert_array_equal(_grism_zernikes(wfi, aber, (1000, 2000)), expected)
+
+
+def test_wfi_table_wavelength_is_not_out_of_range(caplog):
+    """svh/newrd: 1.0 um is a GRISM table wavelength, stored as 1.0000000000000002e-06."""
+    import logging
+
+    wfi = roman.WFI()
+    wfi.filter = 'GRISM1'
+    interp = next(iter(wfi._detectors['WFI05']._wavelength_interpolators.values()))
+    with caplog.at_level(logging.WARNING, logger='stpsf'):
+        terms = interp.get_aberration_terms(1.0e-6)
+    assert 'outside the range' not in caplog.text
+    np.testing.assert_array_equal(terms, interp._aberration_terms[0])
+
+
+def test_wfi_zernike_opd_matches_poppy():
+    """svh/newrd: stpsf's float32 in-pupil basis gives poppy's ZernikeWFE OPD."""
+    import poppy
+
+    wfi = roman.WFI()
+    wfi.filter = 'F158'
+    osys = wfi.get_optical_system()
+    aber = next(p for p in osys.planes if isinstance(p, roman.FieldDependentAberration))
+    wave = osys.input_wavefront(1.5e-6)
+    ours = aber.get_opd(wave)
+    reference = poppy.ZernikeWFE(coefficients=aber.coefficients, radius=aber.radius).get_opd(wave)
+    assert np.abs(ours - reference).max() < 1e-6 * np.abs(reference).max()
+
+
+def test_wfi_import_leaves_poppy_cache_alone():
+    """svh/newrd: importing stpsf no longer resizes poppy's global Zernike cache."""
+    import poppy
+
+    assert poppy.zernike.cached_zernike1.cache_info().maxsize == 128
+
+
+@pytest.mark.parametrize('filt, ref_um', [('GRISM1', 1.55), ('PRISM', 1.2), ('F158', 1.577)])
+def test_wfi_si_wfe_in_header(filt, ref_um):
+    """svh/newrd: SI_WFE is written for WFI, with its reference wavelength."""
+    wfi = roman.WFI()
+    wfi.filter = filt
+    header = wfi.calc_psf(monochromatic=1.5e-6, fov_pixels=8)[0].header
+    assert header['SIWFE_WL'] == pytest.approx(ref_um)
+    assert 20 < header['SI_WFE'] < 200
+    assert header['SI_WFE'] > header['TEL_WFE']

@@ -21,10 +21,9 @@ from scipy.interpolate import griddata
 
 from . import distortion, utils, stpsf_core, detectors, constants
 
-# Monkey patch: double the cache size over the default maxsize=128
-# to prevent slowdowns from increased number of Zernike coefficients
-from functools import lru_cache
-poppy.zernike.cached_zernike1 = lru_cache(maxsize=256)(poppy.zernike.cached_zernike1.__wrapped__)
+from collections import OrderedDict
+
+from scipy.spatial import ConvexHull, QhullError
 
 _log = logging.getLogger('stpsf')
 
@@ -124,17 +123,20 @@ class WavelengthDependenceInterpolator(object):
         """Return the Zernike coefficients as interpolated for this
         `wavelength`"""
         # return array of length n_zernikes interpolated for this wavelength
-        if wavelength in self._wavelengths:
+        if isinstance(wavelength, u.Quantity):
+            wavelength = wavelength.to(u.m).value
+        # svh/newrd: match table wavelengths with a relative tolerance. They
+        # are stored as nm * 1e-9 (e.g. 1.0000000000000002e-06), so an exact
+        # comparison missed them and treated the lowest one as out of range.
+        match = np.flatnonzero(np.isclose(self._wavelengths, wavelength, rtol=1e-9, atol=0))
+        if match.size:
             # aberration known exactly for this wavelength
-            aberration_row_idx = self._wavelengths.index(wavelength)
             # svh/newrd: return a copy, not a view into the stored table
-            return self._aberration_terms[aberration_row_idx].copy()
+            return self._aberration_terms[match[0]].copy()
         else:
             # we have to interpolate @ this wavelength
             aberration_terms = griddata(self._wavelengths, self._aberration_terms, wavelength, method='linear')
             if np.any(np.isnan(aberration_terms)):
-                if isinstance(wavelength, u.Quantity):
-                    wavelength = wavelength.to(u.m).value
                 wavelength_closest = np.clip(wavelength, np.min(self._wavelengths), np.max(self._wavelengths))
                 _log.warn(
                     'Attempted to get aberrations at wavelength {:.2g} '
@@ -180,8 +182,39 @@ class FieldDependentAberration(poppy.ZernikeWFE):
             wavelength = wave
         else:
             wavelength = wave.wavelength
-        self.coefficients = self.get_aberration_terms(wavelength) * u.meter
-        return super().get_opd(wave)
+        coefficients = self.get_aberration_terms(wavelength)
+        self.coefficients = coefficients * u.meter
+        if not isinstance(wave, poppy.Wavefront) or poppy.accel_math._USE_CUPY:
+            return super().get_opd(wave)
+
+        # svh/newrd: evaluate the Zernikes from a basis kept by stpsf, in
+        # float32 and only inside the pupil, instead of poppy's cache of full
+        # float64 maps (which stpsf used to enlarge for every poppy user by
+        # patching poppy at import). 210 terms at 1024 px: ~0.7 GB, not ~1.8 GB.
+        pixelscale_m = wave.pixelscale.to(u.meter / u.pixel).value
+        basis = _zernike_basis(wave.shape, pixelscale_m, self.radius.to(u.meter).value,
+                               len(coefficients))
+        inside_opd = np.zeros(basis.inside.sum(), dtype=np.float64)
+        for k, row in zip(coefficients, basis.rows):
+            if k != 0.0:
+                inside_opd += k * row
+        opd = np.zeros(wave.shape, dtype=np.float64)
+        opd[basis.inside] = inside_opd
+        opd[self.circular_aperture.get_transmission(wave) == 0] = 0
+        return opd
+
+    def rms_wfe(self, wave, transmission):
+        """RMS wavefront error [m] of these aberrations over the pixels where
+        `transmission` > 0, at the wavelength of `wave`."""
+        opd = self.get_opd(wave)
+        return float(np.sqrt(np.mean(opd[transmission > 0] ** 2)))
+
+    def reference_wavelength(self):
+        """The middle tabulated wavelength [m] (the filter centre for the
+        imaging filters, 1.55 um for the grisms, 1.2 um for the prism)."""
+        interpolator = next(iter(self._wavelength_interpolators.values()))
+        nodes = np.sort(np.asarray(interpolator._wavelengths, dtype=np.float64))
+        return float(nodes[len(nodes) // 2])
 
     @property
     def field_position(self):
@@ -224,36 +257,29 @@ class FieldDependentAberration(poppy.ZernikeWFE):
             field_position = tuple(self.field_position)
             coefficients = griddata(np.asarray(field_points), np.asarray(aberration_terms), field_position, method='linear')
             if np.any(np.isnan(coefficients)):
-                # Find two closest input grid points
-                # [decomposed hypot args are (xdiffs, ydiffs)]
-                dist = np.hypot(*(np.asarray(field_points)
-                                  - np.asarray(field_position)).T)
-                min_dist_indx = np.argsort(dist)[:2]  # keep two closest points
-                # Define line between two points, then find orthogonal line at
-                # point of interest and intersection of these two lines
-                x1, y1 = field_points[min_dist_indx[0]]
-                x2, y2 = field_points[min_dist_indx[1]]
-                dx = x2 - x1
-                dy = y2 - y1
-                a = (dy * (field_position[1] - y1) + dx * (field_position[0] - x1)) / (dx * dx + dy * dy)
-                closest_interp_point = (x1 + a * dx, y1 + a * dy)
-                # Interpolate aberrations to closest interpolated point
-                coefficients = griddata(
-                    np.asarray(field_points), np.asarray(aberration_terms), closest_interp_point, method='linear'
-                )
-                # If closest interpolatd point is still outside the input grid,
-                # use nearest grid point instead
-                if np.any(np.isnan(coefficients)):
-                    coefficients = aberration_terms[min_dist_indx[0]]
-                    _log.warn(
+                # svh/newrd: outside the convex hull of the field points, use
+                # the nearest point on the hull boundary. Linear interpolation
+                # along a hull edge uses only that edge's end points, so this
+                # is continuous with the inside. (The previous fallback
+                # projected onto the line through the two nearest field points,
+                # which is usually not a hull edge, so the coefficients jumped
+                # by up to ~9 nm where a position crossed the hull.)
+                points = np.asarray(field_points, dtype=np.float64)
+                boundary_point = _nearest_point_on_hull(points, field_position)
+                if boundary_point is not None:
+                    coefficients = griddata(points, aberration_array, tuple(boundary_point), method='linear')
+                if boundary_point is None or np.any(np.isnan(coefficients)):
+                    nearest = np.argmin(np.hypot(*(points - np.asarray(field_position)).T))
+                    coefficients = aberration_array[nearest]
+                    _log.warning(
                         'Attempted to get aberrations at field point {} which is outside the range '
                         'of the reference data; approximating to nearest input grid point'.format(field_position)
                     )
                 else:
-                    _log.warn(
+                    _log.warning(
                         'Attempted to get aberrations at field point {} which is outside the range '
-                        'of the reference data; approximating to nearest interpolated point {}'.format(
-                            field_position, closest_interp_point
+                        'of the reference data; using the nearest point on the boundary {}'.format(
+                            field_position, tuple(boundary_point)
                         )
                     )
                 assert not np.any(np.isnan(coefficients)), 'Could not compute aberration ' 'at field point {}'.format(
@@ -267,6 +293,62 @@ class FieldDependentAberration(poppy.ZernikeWFE):
             _log.debug('Omitting piston/tip/tilt')
             coefficients[:3] = 0.0  # omit piston, tip, and tilt Zernikes
         return coefficients
+
+
+def _nearest_point_on_hull(points, position):
+    """Nearest point to `position` on the convex hull boundary of `points`,
+    nudged a hair inside so `griddata` does not return NaN on round-off.
+    None if the points have no 2-D hull."""
+    try:
+        vertices = points[ConvexHull(points).vertices]
+    except (QhullError, ValueError):
+        return None
+    position = np.asarray(position, dtype=np.float64)
+    best, best_dist = None, np.inf
+    for a, b in zip(vertices, np.roll(vertices, -1, axis=0)):
+        edge = b - a
+        t = np.clip(np.dot(position - a, edge) / np.dot(edge, edge), 0.0, 1.0)
+        candidate = a + t * edge
+        dist = np.hypot(*(position - candidate))
+        if dist < best_dist:
+            best, best_dist = candidate, dist
+    return best + 1e-9 * (points.mean(axis=0) - best)
+
+
+class _ZernikeBasis:
+    """Noll-normalised Zernikes Z1..Zn as float32 rows over the pixels inside
+    the pupil radius, grown on demand."""
+
+    def __init__(self, shape, pixelscale, radius):
+        self.shape, self.pixelscale, self.radius = shape, pixelscale, radius
+        y, x = poppy.Wavefront.pupil_coordinates(shape, pixelscale)
+        rho = np.sqrt(x ** 2 + y ** 2) / radius
+        self.inside = rho <= 1
+        self._rho = rho[self.inside]
+        self._theta = np.arctan2(y, x)[self.inside]
+        self.rows = []
+
+    def extend(self, nterms):
+        for j in range(len(self.rows) + 1, nterms + 1):
+            n, m = poppy.zernike.noll_indices(j)
+            row = poppy.zernike.zernike(n, m, rho=self._rho, theta=self._theta,
+                                        outside=0.0, noll_normalize=True)
+            self.rows.append(np.asarray(row, dtype=np.float32))
+        return self
+
+
+# Few distinct samplings occur in a session (usually one), so keep the last two.
+_ZERNIKE_BASES = OrderedDict()
+_ZERNIKE_BASES_MAX = 2
+
+
+def _zernike_basis(shape, pixelscale, radius, nterms):
+    key = (tuple(shape), float(pixelscale), float(radius))
+    basis = _ZERNIKE_BASES.pop(key, None) or _ZernikeBasis(*key)
+    _ZERNIKE_BASES[key] = basis
+    while len(_ZERNIKE_BASES) > _ZERNIKE_BASES_MAX:
+        _ZERNIKE_BASES.popitem(last=False)
+    return basis.extend(nterms)
 
 
 def _load_wfi_detector_aberrations(filename):

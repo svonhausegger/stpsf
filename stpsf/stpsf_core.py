@@ -466,15 +466,26 @@ class SpaceTelescopeInstrument(poppy.instrument.Instrument):
         if aberration_optic is not None:
             optsys.add_pupil(aberration_optic)
 
-            try:
-                # Calculate SI WFE over just the OTE entrance pupil aperture,
-                # though with a flip in the Y axis to account for entrance vs. exit pupil conventions
-                exit_pupil_mask = pupil_optic.amplitude[::-1] == 1
-                inst_rms_wfe_nm = np.sqrt(np.mean(aberration_optic.opd[exit_pupil_mask] ** 2)) * 1e9
-                self._extra_keywords['SI_WFE'] = (float(inst_rms_wfe_nm), '[nm] instrument pupil RMS wavefront error')
-            except (TypeError, IndexError):
-                # Currently the above does not work for Roman, but fixing this is deferred to future work
-                pass
+            if self.name == 'WFI' and hasattr(aberration_optic, 'rms_wfe'):
+                # svh/newrd: the generic code below needs a static 2-D .opd,
+                # which the WFI's FieldDependentAberration does not have (its
+                # Zernikes depend on wavelength), so SI_WFE was never written.
+                # Evaluate it at a stated reference wavelength over the pupil,
+                # with no flip: the WFI inversion comes after the aberrations.
+                ref_wavelength = aberration_optic.reference_wavelength()
+                wave = optsys.input_wavefront(ref_wavelength * units.m)
+                inst_rms_wfe_nm = aberration_optic.rms_wfe(wave, pupil_optic.get_transmission(wave)) * 1e9
+                self._extra_keywords['SI_WFE'] = (float(inst_rms_wfe_nm), '[nm] field-dependent (Zernike) RMS WFE at SIWFE_WL')
+                self._extra_keywords['SIWFE_WL'] = (round(ref_wavelength * 1e6, 6), '[micron] wavelength of SI_WFE')
+            else:
+                try:
+                    # Calculate SI WFE over just the OTE entrance pupil aperture,
+                    # though with a flip in the Y axis to account for entrance vs. exit pupil conventions
+                    exit_pupil_mask = pupil_optic.amplitude[::-1] == 1
+                    inst_rms_wfe_nm = np.sqrt(np.mean(aberration_optic.opd[exit_pupil_mask] ** 2)) * 1e9
+                    self._extra_keywords['SI_WFE'] = (float(inst_rms_wfe_nm), '[nm] instrument pupil RMS wavefront error')
+                except (TypeError, IndexError):
+                    _log.debug('SI_WFE not computed: aberration optic has no 2-D OPD map')
 
             if hasattr(aberration_optic, 'header_keywords'):
                 self._extra_keywords.update(aberration_optic.header_keywords())
