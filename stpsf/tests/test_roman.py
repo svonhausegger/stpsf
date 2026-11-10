@@ -368,3 +368,26 @@ def test_wfi_unlock_aberrations_keeps_field_position():
     assert wfi._detectors['WFI05'].field_position == pos
     wfi.unlock_aberrations()
     assert wfi._detectors['WFI05'].field_position == pos
+
+
+def test_wfi_aberration_table_not_modified():
+    """svh/newrd: omitting Z1-3 must not zero them in the stored Zernike table."""
+    wfi = roman.WFI()
+    wfi.filter = 'F158'
+    wfi.detector = 'WFI05'
+    aber = wfi._detectors['WFI05']
+    interp = next(iter(aber._wavelength_interpolators.values()))
+    wl = interp._wavelengths[0]
+    stored = interp._aberration_terms.copy()
+    assert np.any(stored[0, :3] != 0)
+
+    # exact field point (short path) and an off-grid one, both at a tabulated wavelength
+    for fp in list(aber._wavelength_interpolators)[:1] + [(2000, 2000)]:
+        aber.field_position = fp
+        terms = aber.get_aberration_terms(wl)
+        assert np.all(terms[:3] == 0)
+    np.testing.assert_array_equal(interp._aberration_terms, stored)
+
+    aber._omit_piston_tip_tilt = False
+    aber.field_position = list(aber._wavelength_interpolators)[0]
+    np.testing.assert_array_equal(aber.get_aberration_terms(wl), stored[0])

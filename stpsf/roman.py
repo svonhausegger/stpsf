@@ -126,7 +126,8 @@ class WavelengthDependenceInterpolator(object):
         if wavelength in self._wavelengths:
             # aberration known exactly for this wavelength
             aberration_row_idx = self._wavelengths.index(wavelength)
-            return self._aberration_terms[aberration_row_idx]
+            # svh/newrd: return a copy, not a view into the stored table
+            return self._aberration_terms[aberration_row_idx].copy()
         else:
             # we have to interpolate @ this wavelength
             aberration_terms = griddata(self._wavelengths, self._aberration_terms, wavelength, method='linear')
@@ -257,6 +258,10 @@ class FieldDependentAberration(poppy.ZernikeWFE):
                 assert not np.any(np.isnan(coefficients)), 'Could not compute aberration ' 'at field point {}'.format(
                     field_position
                 )
+        # svh/newrd: work on a copy. At a tabulated wavelength (and at the
+        # nearest-grid-point fallback) `coefficients` is a view into the stored
+        # table, so zeroing Z1-3 in place erased them from the table for good.
+        coefficients = np.array(coefficients, dtype=np.float64)
         if self._omit_piston_tip_tilt:
             _log.debug('Omitting piston/tip/tilt')
             coefficients[:3] = 0.0  # omit piston, tip, and tilt Zernikes
