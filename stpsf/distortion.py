@@ -195,7 +195,7 @@ def apply_distortion(hdulist_or_filename=None, fill_value=0):
 
     # Create a copy of the PSF
     psf = copy.deepcopy(hdu_list)
-    ext = 1  # edit the oversampled PSF (OVERDIST extension)
+    ext = 'OVERDIST'  # edit the oversampled distorted PSF
 
     # Log instrument and detector names
     instrument = hdu_list[0].header['INSTRUME'].upper().strip()
@@ -286,7 +286,7 @@ def apply_rotation(hdulist_or_filename=None, rotate_value=None, crop=True):
     # If crop = True, then reshape must be False - so invert this keyword
     reshape = np.invert(crop)
 
-    ext = 1  # edit the oversampled PSF (OVERDIST extension)
+    ext = 'OVERDIST'  # edit the oversampled distorted PSF
 
     psf_new = rotate(psf[ext].data, rotate_value, reshape=reshape)
 

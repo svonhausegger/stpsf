@@ -261,7 +261,7 @@ def apply_detector_charge_diffusion(psf_hdulist, options):
                                    )
         return psf_hdulist
 
-    ext = 1  # Apply to the 'OVERDIST' extension
+    ext = 'OVERDIST'  # Apply to the oversampled distorted PSF, by name
 
     stpsf.stpsf_core._log.info(
         f'Detector charge diffusion: Convolving with Gaussian with sigma={sigma:.3f} arcsec'
@@ -515,7 +515,7 @@ def apply_miri_scattering(hdulist_or_filename=None, kernel_amp=None, old_method=
     if kernel_amp is None:
         kernel_amp = get_miri_cruciform_amplitude(filt)
 
-    ext = 1  # edit the oversampled PSF (OVERDIST extension)
+    ext = 'OVERDIST'  # edit the oversampled distorted PSF
 
     # Set over-sample value
     oversample = psf[ext].header['DET_SAMP']
@@ -597,7 +597,7 @@ def apply_miri_ifu_broadening(hdulist, options, slice_width=0.196):
     if model_type is None or model_type.lower() == 'none':
         return hdulist
 
-    ext = 1  # Apply this effect to the OVERDIST extension, which at this point in the code will be ext 1
+    ext = 'OVERDIST'  # Apply this effect to the oversampled distorted PSF
 
     stpsf.stpsf_core._log.info(f'Applying MIRI IFU broadening model: {model_type}')
     hdulist[ext].header.add_history(f"Added broadening model for IFU PSFs: {model_type}")
@@ -633,7 +633,7 @@ def apply_nirspec_ifu_broadening(hdulist, options):
     if model_type is None or model_type.lower() == 'none':
         return hdulist
 
-    ext = 1  # Apply this effect to the OVERDIST extension, which at this point in the code will be ext 1
+    ext = 'OVERDIST'  # Apply this effect to the oversampled distorted PSF
 
     stpsf.stpsf_core._log.info(f'Applying NRS IFU broadening model ({model_type}) to '+
                                    f'ext {hdulist[ext].header["EXTNAME"]}')

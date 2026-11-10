@@ -203,3 +203,22 @@ def test_ipc_basic_effect_on_psf_fwhm():
         fwhm_noipc = poppy.measure_fwhm(psf_noipc, ext=extname)
         assert fwhm_ipc > fwhm_noipc, f'Adding IPC should not blur and increase the FWHM in the {extname} data.'
         print(f'test ok for {extname}')
+
+
+def test_charge_diffusion_applies_to_overdist_by_name():
+    """Charge diffusion blurs the OVERDIST extension wherever it is in the HDUList."""
+    image = np.zeros((32, 32))
+    image[16, 16] = 1.0
+    hdulist = fits.HDUList([fits.PrimaryHDU(image.copy())])
+    hdulist[0].header['EXTNAME'] = 'OVERSAMP'
+    hdulist[0].header['INSTRUME'] = 'WFI'
+    hdulist[0].header['PIXELSCL'] = 0.11 / 4
+    for name in ('DET_SAMP', 'OVERDIST'):  # OVERDIST not at index 1
+        hdulist.append(fits.ImageHDU(image.copy(), name=name))
+
+    out = detectors.apply_detector_charge_diffusion(hdulist, {'charge_diffusion_sigma': 0.06})
+
+    assert out['OVERDIST'].header['CHDFTYPE'] == 'gaussian'
+    assert out['OVERDIST'].data.max() < 0.5
+    assert 'CHDFTYPE' not in out['DET_SAMP'].header
+    np.testing.assert_array_equal(out['DET_SAMP'].data, image)
