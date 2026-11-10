@@ -334,3 +334,37 @@ def test_wfi_ipc_matches_explicit_option():
     assert not np.allclose(off[d].data, on[d].data)
     # IPC moves light from the core into the neighbours
     assert on[d].data.max() < off[d].data.max()
+
+
+@pytest.mark.parametrize('first, second', [('F158', 'F087'), ('F158', 'GRISM1'), ('GRISM0', 'PRISM')])
+def test_wfi_filter_change_keeps_field_position(first, second):
+    """Changing the filter after setting a position keeps the Zernikes at that position."""
+    pos = (300, 3800)
+    wfi = roman.WFI()
+    wfi.detector = 'WFI05'
+    wfi.filter = first
+    wfi.detector_position = pos
+    wfi.filter = second
+    assert wfi._detectors['WFI05'].field_position == pos
+
+    ref = roman.WFI()
+    ref.detector = 'WFI05'
+    ref.filter = second
+    ref.detector_position = pos
+    np.testing.assert_array_equal(wfi._detectors['WFI05'].get_aberration_terms(1.2e-6),
+                                  ref._detectors['WFI05'].get_aberration_terms(1.2e-6))
+    kw = dict(fov_pixels=11, oversample=2, monochromatic=1.2e-6)
+    np.testing.assert_allclose(wfi.calc_psf(**kw)['OVERSAMP'].data, ref.calc_psf(**kw)['OVERSAMP'].data,
+                               rtol=0, atol=1e-12)
+
+
+def test_wfi_unlock_aberrations_keeps_field_position():
+    """Reloading the default aberrations also keeps the current position."""
+    pos = (300, 3800)
+    wfi = roman.WFI()
+    wfi.detector = 'WFI05'
+    wfi.detector_position = pos
+    wfi.lock_aberrations(wfi._aberration_files[wfi.mode])
+    assert wfi._detectors['WFI05'].field_position == pos
+    wfi.unlock_aberrations()
+    assert wfi._detectors['WFI05'].field_position == pos

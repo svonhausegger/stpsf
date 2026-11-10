@@ -834,6 +834,15 @@ class WFI(RomanInstrument):
         detectors_dict = _load_wfi_detector_aberrations(path)
         assert len(detectors_dict.keys()) > 0
 
+        # The new FieldDependentAberration objects start at the detector
+        # centre. Carry over the current detector position, so that a filter
+        # change (or lock/unlock_aberrations) keeps the Zernikes at the
+        # same place as the pupil mask slice and the header.
+        position = getattr(self, '_detector_position', None)
+        if position is not None:
+            for aber_obj in detectors_dict.values():
+                aber_obj.field_position = (int(position[0]), int(position[1]))
+
         self._detectors = detectors_dict
         self._current_aberration_file = path
 
