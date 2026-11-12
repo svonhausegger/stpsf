@@ -211,6 +211,38 @@ def test_nircam_errors():
     assert 'ValueError' in str(excinfo)
 
 
+def test_roman_grid_applies_diffusion_and_preserves_ipc_option():
+    """Roman grids must include charge diffusion (and IPC), and psf_grid must not alter options['add_ipc']"""
+    wfi = roman.WFI()
+    wfi.filter = 'F184'
+    wfi.detector = 'WFI03'
+    kw = dict(all_detectors=False, num_psfs=1, oversample=2, fov_pixels=11, verbose=False)
+    # svh/newrd: WFI defaults to add_ipc=False here (upstream: True), so check
+    # the option is unchanged rather than a fixed default; then the other value.
+    default_ipc = wfi.options['add_ipc']
+
+    wfi.options['charge_diffusion_sigma'] = 0.0
+    peak_nodiff = wfi.psf_grid(**kw).data[0].max()
+    wfi.options['charge_diffusion_sigma'] = 0.1
+    grid = wfi.psf_grid(**kw)
+    assert grid.data[0].max() < peak_nodiff
+    assert 'chdfsigm' in grid.meta  # GriddedPSFModel lowercases meta keys
+    assert wfi.options['add_ipc'] is default_ipc
+
+    wfi.options['add_ipc'] = not default_ipc
+    wfi.psf_grid(**kw)
+    assert wfi.options['add_ipc'] is (not default_ipc)
+
+
+def test_grid_preserves_ipc_option_without_distortion():
+    """psf_grid must restore options['add_ipc'] even when add_distortion=False"""
+    nir = stpsf_core.NIRCam()
+    nir.filter = 'F200W'
+    nir.detector = 'NRCA1'
+    nir.psf_grid(all_detectors=False, num_psfs=1, fov_pixels=4, oversample=2, add_distortion=False, verbose=False)
+    assert nir.options['add_ipc'] is True
+
+
 def test_saving(tmpdir):
     """Test saving files works properly"""
 
@@ -288,8 +320,7 @@ def test_wfi():
 
     # Using meta data, create the expected same PSF via calc_psf
     wfi.detector_position = (locx, locy)
-    # svh/newrd: the grid comes from OVERDIST (charge diffusion, IPC per add_ipc,
-    # off by default in this fork), not OVERSAMP.
+    # Roman grids include charge diffusion and IPC, which live in the OVERDIST extension
     calcpsf = wfi.calc_psf(oversample=oversample, fov_pixels=fov_pixels, nlambda=nlambda)['OVERDIST'].data
     kernel = astropy.convolution.Box2DKernel(width=oversample)
     convpsf = astropy.convolution.convolve(calcpsf, kernel)
@@ -297,7 +328,8 @@ def test_wfi():
 
     # Compare to make sure they are in fact the same PSF
     assert gridpsf.shape == calcpsf.shape, 'Shape mismatch'
-    assert np.allclose(gridpsf, convpsf * scalefactor), 'Data values not as expected'
+    # small atol: IPC and the pixel-box convolution commute except for edge handling
+    assert np.allclose(gridpsf, convpsf * scalefactor, atol=1e-5), 'Data values not as expected'
 
 
 def _wfi_grid_and_psf(add_ipc):

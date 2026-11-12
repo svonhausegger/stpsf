@@ -285,12 +285,8 @@ class CreatePSFLibrary:
 
         """
         add_distortion = getattr(self, 'add_distortion', False)
-        # svh/newrd: Roman WFI PSFs always include their distortion, and only the
-        # *DIST extensions include charge diffusion (RomanInstrument.
-        # _calc_psf_format_output). add_distortion is never set for Roman, so the
-        # grid used to come from OVERSAMP/DET_SAMP, without charge diffusion.
-        # Use the *DIST extensions for WFI; IPC still follows options['add_ipc'].
-        use_dist_ext = add_distortion or self.webb.name == 'WFI'
+        # Roman PSFs natively include distortion; their *DIST extensions always carry charge diffusion (and IPC)
+        use_dist_ext = add_distortion or self.webb.telescope == 'Roman'
 
         # Set output mode and extension to use
         if self.use_detsampled_psf is True:
@@ -336,16 +332,15 @@ class CreatePSFLibrary:
                 if self.verbose is True:
                     print(f'    Position {i + 1}/{len(self.location_list)}: {loc} pixels')
 
-                add_ipc_gridded = (
-                    False  # add variable to keep track of if this function locally changed the user's IPC input
-                )
                 # Deactivate IPC corrections, if any, before calc_psf as we are applying them later
-                if self.webb.options.get('add_ipc', True):
+                orig_add_ipc = self.webb.options.get('add_ipc', True)
+                add_ipc_gridded = bool(orig_add_ipc)
+                if add_ipc_gridded:
                     self.webb.options['add_ipc'] = False
-                    add_ipc_gridded = True  # we should reset the IPC flag below, after computing the PSF
 
                 # Create PSF
                 psf = self.webb.calc_psf(**self._kwargs)
+                self.webb.options['add_ipc'] = orig_add_ipc  # restore the user's value for the IPC option
                 if self.verbose is True:
                     cntrd = poppy.measure_centroid(psf)
                     print(f'    Position {i + 1}/{len(self.location_list)} centroid: {cntrd}')
@@ -356,11 +351,6 @@ class CreatePSFLibrary:
                 # Convolve PSF with a model for interpixel capacitance
                 if use_dist_ext and add_ipc_gridded:
                     stpsf.detectors.apply_detector_ipc(psf, extname=ext)
-                # svh/newrd: restore the user's IPC option whenever it was switched
-                # off above. 2.3.0 restored it only with add_distortion, so a
-                # grid made without distortion left the instrument with IPC off.
-                if add_ipc_gridded:
-                    self.webb.options['add_ipc'] = True
 
                 # Add PSF to 5D array
                 psf_arr[i, :, :] = psf[ext].data

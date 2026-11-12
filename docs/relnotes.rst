@@ -23,6 +23,29 @@ See https://github.com/spacetelescope/stpsf/issues for currently open issues and
 Version History and Change Log
 -------------------------------
 
+Version 2.3.1
+=============
+*2026 November*
+
+This maintenance update includes a couple of important fixes affecting Roman PSF
+and ePSF simulations. Highlights of this release include, but are not limited to:
+
+a) Fixed an issue in which per-detector field-dependent high-frequency WFE maps were not loaded correctly (see #195 in "What's Changed")
+b) Fixed coordinate flip affecting the application of field-dependent Zernike polynomials in the Roman optical model. While the pupil geometry itself was handled correctly, the Zernike coordinate system was flipped. (#196)
+c) Fixed an issue in which detector charge diffusion was not being applied when generating simulated ePSF grids. Note that single-PSF calculations were unaffected. (#199)
+
+**What's Changed**
+
+* Allow all detector high-frequency WFI OPDs by @ojustino in https://github.com/spacetelescope/stpsf/pull/195
+* Reorder WFI wavefront inversion/rotation by @ojustino in https://github.com/spacetelescope/stpsf/pull/196
+* Apply charge diffusion and IPC in Roman WFI psf_grid; restore add_ipc option by @mperrin in https://github.com/spacetelescope/stpsf/pull/199
+* Refresh Roman tutorial notebook by @ojustino in https://github.com/spacetelescope/stpsf/pull/197
+* Change monochromatic wavelength in Roman tutorial by @ojustino in https://github.com/spacetelescope/stpsf/pull/201
+* updating optics planes figure by @marcio-melendez in https://github.com/spacetelescope/stpsf/pull/200
+* Hide notebook prompts in docs by @ojustino in https://github.com/spacetelescope/stpsf/pull/202
+
+**Full Changelog**: https://github.com/spacetelescope/stpsf/compare/2.3.0...v2.3.1
+
 Version 2.3.0
 =============
 *2026 October*
@@ -91,10 +114,12 @@ pages.
 Version 2.2.0
 =============
 *2025 December*
+
 This release includes updates for the Roman WFI PSF to synchronize with the Roman ETC
 release in January 2026. It also includes accumulated JWST updates as of December 2025.
 
-## What's Changed
+**What's Changed**
+
 * Docs update by @BradleySappington in https://github.com/spacetelescope/stpsf/pull/109
 * Docs update by @BradleySappington in https://github.com/spacetelescope/stpsf/pull/110
 * update mast_wss.query_wfsc_images_latest for cycle 4 by @mperrin in https://github.com/spacetelescope/stpsf/pull/112
@@ -119,16 +144,22 @@ release in January 2026. It also includes accumulated JWST updates as of Decembe
 Version 2.1.0
 =============
 *2025 June*
+
 This release updates the Roman instrument model for use with the Cycle 10 optical models of
 WFI wavefront error from Goddard Space Flight Center (Fall 2024).
+
 Note that accessing these optical models requires an upgrade to the latest reference data.
+
 The updated Roman reference files introduce
+
 a) Zernike coefficients specific to each filter for modeling wavefront error,
 b) throughputs specific to each filter *and* detector, and
 c) pupil masks specific to each of the imaging and prism filters. (The zeroth and first order grism filters continue to share a pupil mask.)
+
 The `add_distortion` flag now has no effect on Roman simulations since our input WFI pupil masks natively include distortion effects.
 
 **What's Changed**
+
 * release 2.0.0 by @BradleySappington in https://github.com/spacetelescope/stpsf/pull/48
 * example notebook on how to transition from webbpsf to stpsf by @obi-wan76 in https://github.com/spacetelescope/stpsf/pull/57
 * new information added to our transition documentation by @obi-wan76 in https://github.com/spacetelescope/stpsf/pull/58
@@ -163,9 +194,13 @@ The `add_distortion` flag now has no effect on Roman simulations since our input
 Version 2.0.0
 =============
 *2024 December*
+
 Ready for Production Release
+
 All versions before 1.5.1 were part of the WebbPSF repository
+
 **What's Changed**
+
 * Final migration before version 2.0.0 by @BradleySappington in https://github.com/spacetelescope/stpsf/pull/46
 * Test readthedocs by @BradleySappington in https://github.com/spacetelescope/stpsf/pull/47
 
